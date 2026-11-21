@@ -3,3 +3,4 @@
 graphify-out/
 *.sig
 .graphify*
+publish-release.ps1
