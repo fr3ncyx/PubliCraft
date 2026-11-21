@@ -1,0 +1,9 @@
+[package]
+name = "craft-theme"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Stile condiviso (colori, spaziature) per FrancyLauncher e le app Craft"
+
+[dependencies]
+egui.workspace = true
