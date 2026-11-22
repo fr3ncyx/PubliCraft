@@ -6,6 +6,9 @@ use egui::Rect as ERect;
 use publicraft_doc::{AlignKind, CaseKind, Family, ListKind, Wrap, change_case};
 
 const ACCENT: Color32 = craft_theme::ACCENT_PUBLICRAFT;
+const COMMANDS: [&str; 15] = [
+    "Nuovo", "Apri", "Salva", "Salva con nome", "Annulla", "Ripeti", "Trova e sostituisci", "Casella di testo", "Rettangolo", "Ellisse", "Immagine", "Tabella", "Pagina master", "Pagina doppia", "Importa PDF",
+];
 const BODY_H: f32 = 70.0;
 const TILE_W: f32 = 58.0;
 const SIZES: [f32; 18] = [8.0, 9.0, 10.0, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 40.0, 48.0, 60.0, 72.0, 96.0];
@@ -29,7 +32,7 @@ fn step_size(cur: f32, up: bool) -> f32 {
 }
 
 fn dim() -> Color32 {
-    craft_theme::TEXT_DIM.gamma_multiply(0.6)
+    Color32::from_gray(0xb4)
 }
 
 /// Pulsante grande con icona sopra e nome sotto.
@@ -37,12 +40,15 @@ fn tile(ui: &mut Ui, glyph: &str, label: &str, enabled: bool, active: bool) -> R
     let (rect, resp) = ui.allocate_exact_size(vec2(TILE_W, BODY_H), if enabled { Sense::click() } else { Sense::hover() });
     let p = ui.painter();
     if active {
-        p.rect_filled(rect, CornerRadius::ZERO, ACCENT.gamma_multiply(0.3));
+        p.rect_filled(rect, CornerRadius::ZERO, look::accent_soft());
         p.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(1.0, ACCENT), egui::StrokeKind::Inside);
-    } else if enabled && resp.hovered() {
-        p.rect_filled(rect, CornerRadius::ZERO, craft_theme::PANEL_RAISED);
+    } else if enabled {
+        let t = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+        if t > 0.0 {
+            p.rect_filled(rect, CornerRadius::ZERO, look::panel_raised().gamma_multiply(t));
+        }
     }
-    let col = if enabled { craft_theme::TEXT } else { dim() };
+    let col = if enabled { look::text() } else { dim() };
     p.text(egui::pos2(rect.center().x, rect.top() + 21.0), egui::Align2::CENTER_CENTER, glyph, FontId::proportional(25.0), if enabled { ACCENT.gamma_multiply(1.25) } else { dim() });
     let g = p.layout(label.to_string(), FontId::proportional(12.0), col, TILE_W - 4.0);
     p.galley(egui::pos2(rect.center().x - g.size().x / 2.0, rect.top() + 39.0), g, col);
@@ -60,13 +66,16 @@ fn icon_btn(ui: &mut Ui, tip: &str, enabled: bool, active: bool, draw: impl FnOn
     let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 24.0), if enabled { Sense::click() } else { Sense::hover() });
     let p = ui.painter();
     if active {
-        p.rect_filled(rect, CornerRadius::ZERO, ACCENT.gamma_multiply(0.35));
+        p.rect_filled(rect, CornerRadius::ZERO, look::accent_soft());
         p.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(1.0, ACCENT), egui::StrokeKind::Inside);
-    } else if enabled && resp.hovered() {
-        p.rect_filled(rect, CornerRadius::ZERO, craft_theme::PANEL_RAISED);
-        p.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(1.0, craft_theme::BORDER), egui::StrokeKind::Inside);
+    } else if enabled {
+        let t = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+        if t > 0.0 {
+            p.rect_filled(rect, CornerRadius::ZERO, look::panel_raised().gamma_multiply(t));
+            p.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(1.0, look::border().gamma_multiply(t)), egui::StrokeKind::Inside);
+        }
     }
-    draw(p, rect, if enabled { craft_theme::TEXT } else { dim() });
+    draw(p, rect, if enabled { look::text() } else { dim() });
     if tip.is_empty() { resp } else { resp.on_hover_text(tip).on_disabled_hover_text(tip) }
 }
 
@@ -94,11 +103,11 @@ fn group(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui)) {
             });
             let w = ui.min_rect().width();
             ui.allocate_ui_with_layout(vec2(w.max(10.0), 14.0), Layout::top_down(Align::Center), |ui| {
-                ui.label(egui::RichText::new(title).size(11.5).color(craft_theme::TEXT_DIM));
+                ui.label(egui::RichText::new(title).size(11.5).color(look::text_dim()));
             });
         })
         .response;
-    ui.painter().vline(r.rect.right() + 5.0, r.rect.y_range(), Stroke::new(1.0, craft_theme::BORDER));
+    ui.painter().vline(r.rect.right() + 5.0, r.rect.y_range(), Stroke::new(1.0, look::border()));
     ui.add_space(10.0);
 }
 
@@ -115,64 +124,186 @@ fn color_button(ui: &mut Ui, enabled: bool, color: Rgb) -> Response {
 
 impl PubliCraft {
     pub(crate) fn ribbon(&mut self, ui: &mut Ui) {
-        ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            let file = ui.add(egui::Button::new(egui::RichText::new("File").strong().color(Color32::WHITE)).fill(ACCENT).min_size(vec2(64.0, 26.0)));
-            menu(&file, 200.0, |ui| {
-                let item = |ui: &mut Ui, t: &str| ui.add(egui::Button::new(t).frame(false).min_size(vec2(180.0, 24.0))).clicked();
-                if item(ui, "Nuovo") {
-                    self.new_doc();
-                }
-                if item(ui, "Apri…") {
-                    self.open();
-                }
-                if item(ui, "Salva") {
-                    self.save(false);
-                }
-                if item(ui, "Salva con nome…") && self.save(true) {
-                    // Dopo «Salva con nome» l'app si chiude.
-                    self.request_exit(ui.ctx());
-                }
-                ui.separator();
-                if item(ui, "Esci") {
-                    self.request_exit(ui.ctx());
-                }
+        self.title_bar(ui);
+        let fade = self.tab_bar(ui);
+        ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), Stroke::new(1.0, look::border()));
+        ui.add_space(1.0);
+        egui::ScrollArea::horizontal().id_salt("ribbon-scroll").auto_shrink([false, true]).show(ui, |ui| {
+            ui.scope(|ui| {
+                // Dissolvenza quando si cambia scheda.
+                ui.set_opacity(fade.clamp(0.0, 1.0));
+                ui.horizontal(|ui| {
+                    ui.add_space(6.0);
+                    match self.tab {
+                        RibbonTab::Home => self.home(ui),
+                        RibbonTab::Insert => self.insert_tab(ui),
+                        RibbonTab::View => self.view_tab(ui),
+                    }
+                });
             });
-            ui.add_space(4.0);
-            if sbtn(ui, "↶", "Annulla (Ctrl+Z)", !self.d.undo.is_empty(), false, 26.0).clicked() {
+        });
+        ui.add_space(3.0);
+        ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), Stroke::new(1.0, look::border()));
+    }
+
+    /// Riga del titolo: accesso rapido a sinistra, nome del documento al centro, ricerca comandi a destra.
+    fn title_bar(&mut self, ui: &mut Ui) {
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::hover());
+        let title = format!("{}{}", self.d.title(), if self.d.dirty() { " — Modificato" } else { "" });
+        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, title, FontId::proportional(13.5), look::text());
+
+        let left = ERect::from_min_size(rect.min + vec2(12.0, 0.0), vec2(190.0, 36.0));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(left).layout(Layout::left_to_right(Align::Center)), |ui| {
+            ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+            let glyph = |g: &'static str| move |p: &Painter, r: ERect, c: Color32| {
+                p.text(r.center(), egui::Align2::CENTER_CENTER, g, FontId::proportional(15.0), c);
+            };
+            if icon_btn(ui, "Salva (Ctrl+S)", true, false, glyph("💾")).clicked() {
+                self.save(false);
+            }
+            if icon_btn(ui, "Annulla (Ctrl+Z)", !self.d.undo.is_empty(), false, glyph("↶")).clicked() {
                 self.undo();
             }
-            if sbtn(ui, "↷", "Ripeti (Ctrl+Y)", !self.d.redo.is_empty(), false, 26.0).clicked() {
+            if icon_btn(ui, "Ripeti (Ctrl+Y)", !self.d.redo.is_empty(), false, glyph("↷")).clicked() {
                 self.redo();
             }
-            ui.add_space(10.0);
-            for (t, l) in [(RibbonTab::Home, "Home"), (RibbonTab::Insert, "Inserisci"), (RibbonTab::View, "Visualizza")] {
-                let active = self.tab == t;
-                let r = ui.add(egui::Button::new(egui::RichText::new(l).size(14.0).color(if active { ACCENT.gamma_multiply(1.3) } else { craft_theme::TEXT })).frame(false).min_size(vec2(70.0, 26.0)));
-                if active {
-                    ui.painter().hline(r.rect.x_range(), r.rect.bottom(), Stroke::new(3.0, ACCENT));
+            let dark = craft_theme::is_dark();
+            if icon_btn(ui, if dark { "Modalità chiara" } else { "Modalità scura" }, true, false, glyph(if dark { "☀" } else { "🌙" })).clicked() {
+                self.set_dark(&ui.ctx().clone(), !dark);
+            }
+        });
+
+        let right = ERect::from_min_max(egui::pos2(rect.max.x - 340.0, rect.min.y + 4.0), egui::pos2(rect.max.x - 14.0, rect.max.y - 4.0));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(right).layout(Layout::left_to_right(Align::Center)), |ui| self.search_box(ui));
+    }
+
+    /// Casella «Cerca comandi e guida» con elenco dei risultati.
+    fn search_box(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        let resp = ui.add(egui::TextEdit::singleline(&mut self.cmd).hint_text("🔍  Cerca comandi e guida").desired_width(ui.available_width()).margin(egui::Margin::symmetric(10, 5)));
+        if resp.has_focus() {
+            self.cmd_open = true;
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.cmd.clear();
+                self.cmd_open = false;
+            }
+        }
+        let q = self.cmd.trim().to_lowercase();
+        if !self.cmd_open || q.is_empty() {
+            return;
+        }
+        let hits: Vec<usize> = COMMANDS.iter().enumerate().filter(|(_, c)| c.to_lowercase().contains(&q)).map(|(i, _)| i).collect();
+        let mut run = None;
+        if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+            run = hits.first().copied();
+        }
+        let area = egui::Area::new(ui.scope_id().with("cmd-pop")).order(egui::Order::Foreground).fixed_pos(resp.rect.left_bottom() + vec2(0.0, 4.0)).show(&ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_width(resp.rect.width() - 20.0);
+                if hits.is_empty() {
+                    ui.label(egui::RichText::new("Nessun comando trovato").color(look::text_dim()));
                 }
-                if r.clicked() {
+                for i in &hits {
+                    if ui.add(egui::Button::new(COMMANDS[*i]).frame(false).min_size(vec2(ui.available_width(), 24.0))).clicked() {
+                        run = Some(*i);
+                    }
+                }
+            });
+        });
+        let outside = ctx.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| !area.response.rect.contains(p) && !resp.rect.contains(p)));
+        if outside {
+            self.cmd_open = false;
+        }
+        if let Some(i) = run {
+            self.cmd.clear();
+            self.cmd_open = false;
+            self.run_command(&ctx, i);
+        }
+    }
+
+    fn run_command(&mut self, ctx: &egui::Context, i: usize) {
+        match i {
+            0 => self.new_doc(),
+            1 => self.open(),
+            2 => {
+                self.save(false);
+            }
+            3 => {
+                if self.save(true) {
+                    self.request_exit(ctx);
+                }
+            }
+            4 => self.undo(),
+            5 => self.redo(),
+            6 => {
+                self.find.open = true;
+                self.find.focus = true;
+            }
+            7 => self.tool = Tool::Text,
+            8 => self.tool = Tool::Shape(ShapeTool::Rectangle),
+            9 => self.tool = Tool::Shape(ShapeTool::Ellipse),
+            10 => self.insert_picture(),
+            11 => {
+                let (r, c) = self.table_dims;
+                self.insert_table(r, c);
+            }
+            12 => self.view.master = !self.view.master,
+            13 => self.view.spread = !self.view.spread,
+            _ => self.import_pdf_dialog(),
+        }
+    }
+
+    /// Schede File / Home / Inserisci / Visualizza; restituisce l'opacità (0..1) della scheda attiva.
+    fn tab_bar(&mut self, ui: &mut Ui) -> f32 {
+        let ctx = ui.ctx().clone();
+        let mut fade = 1.0;
+        let mut active_rect: Option<ERect> = None;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+            ui.add_space(10.0);
+            let (r, resp) = ui.allocate_exact_size(vec2(62.0, 30.0), Sense::click());
+            let h = ctx.animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+            let fill = ACCENT.lerp_to_gamma(Color32::from_rgb(0xc2, 0x36, 0x24), h);
+            ui.painter().rect_filled(r, CornerRadius::ZERO, fill);
+            ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "File", FontId::proportional(14.0), Color32::WHITE);
+            if resp.hovered() {
+                ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if resp.clicked() {
+                // «File»: schermata con barra laterale (Home, Nuovo, Apri, Salva…).
+                self.start.section = crate::start::Section::Home;
+                self.start.open = true;
+            }
+            ui.add_space(6.0);
+            for (i, (t, l)) in [(RibbonTab::Home, "Home"), (RibbonTab::Insert, "Inserisci"), (RibbonTab::View, "Visualizza")].into_iter().enumerate() {
+                let (r, resp) = ui.allocate_exact_size(vec2(82.0, 30.0), Sense::click());
+                let active = self.tab == t;
+                let a = ctx.animate_bool_with_time(ui.scope_id().with(("tab-on", i)), active, 0.18);
+                let h = ctx.animate_bool_with_time(resp.id, resp.hovered() && !active, 0.12);
+                if h > 0.0 {
+                    ui.painter().rect_filled(r, CornerRadius::ZERO, look::panel_raised().gamma_multiply(h));
+                }
+                let col = look::text().lerp_to_gamma(ACCENT, a);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, l, FontId::proportional(14.0), col);
+                if resp.hovered() {
+                    ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if active {
+                    active_rect = Some(r);
+                    fade = a;
+                }
+                if resp.clicked() {
                     self.tab = t;
                 }
             }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(egui::RichText::new(self.d.title()).color(craft_theme::TEXT_DIM));
-            });
+            // Sottolineatura che scivola sotto la scheda attiva.
+            if let Some(r) = active_rect {
+                let l = ctx.animate_value_with_time(ui.scope_id().with("tab-l"), r.left() + 6.0, 0.18);
+                let rr = ctx.animate_value_with_time(ui.scope_id().with("tab-r"), r.right() - 6.0, 0.18);
+                ui.painter().hline(l..=rr, r.bottom() - 1.0, Stroke::new(3.0, ACCENT));
+            }
         });
-        ui.add_space(2.0);
-        ui.separator();
-        egui::ScrollArea::horizontal().id_salt("ribbon-scroll").auto_shrink([false, true]).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(4.0);
-                match self.tab {
-                    RibbonTab::Home => self.home(ui),
-                    RibbonTab::Insert => self.insert_tab(ui),
-                    RibbonTab::View => self.view_tab(ui),
-                }
-            });
-        });
-        ui.add_space(2.0);
+        fade
     }
 
     fn home(&mut self, ui: &mut Ui) {

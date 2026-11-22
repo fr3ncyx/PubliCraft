@@ -210,6 +210,21 @@ fn paint_page(p: &Painter, doc: &Document, idx: usize, origin: Pos2, look: &Look
     }
 }
 
+/// Disegna una pagina intera (sfondo bianco, master ed elementi) a `scale` pixel per mm.
+pub(crate) fn paint_page_to(p: &Painter, doc: &Document, idx: usize, origin: Pos2, scale: f32, textures: &HashMap<String, Option<Tex>>) {
+    let area = ERect::from_min_size(origin, vec2(doc.page_size.w_mm, doc.page_size.h_mm) * scale);
+    p.rect_filled(area, CornerRadius::ZERO, Color32::WHITE);
+    let look = Look { scale, textures, marks: false, fields: false, page_no: idx + 1 };
+    paint_page(&p.with_clip_rect(area), doc, idx, origin, &look);
+}
+
+/// Disegna l'anteprima della prima pagina di un documento nel rettangolo dato (schermata iniziale).
+pub(crate) fn paint_doc_preview(p: &Painter, doc: &Document, area: ERect) {
+    let textures = HashMap::new();
+    let look = Look { scale: area.width() / doc.page_size.w_mm, textures: &textures, marks: false, fields: false, page_no: 1 };
+    paint_page(&p.with_clip_rect(area), doc, 0, area.min, &look);
+}
+
 impl PubliCraft {
     /// Posizione (mm) di ogni pagina visibile nello spazio della tela, e dimensione totale.
     pub(crate) fn slots(&self) -> (Vec<(usize, Vec2)>, Vec2) {
@@ -322,7 +337,7 @@ impl PubliCraft {
             Color32::from_gray(0x50)
         };
         painter.rect_stroke(page_rect, CornerRadius::ZERO, Stroke::new(if cur { 2.5 } else { 1.0 }, col), StrokeKind::Outside);
-        painter.text(egui::pos2(page_rect.center().x, page_rect.max.y + 12.0), egui::Align2::CENTER_CENTER, format!("{}", i + 1), FontId::proportional(13.0), craft_theme::TEXT);
+        painter.text(egui::pos2(page_rect.center().x, page_rect.max.y + 12.0), egui::Align2::CENTER_CENTER, format!("{}", i + 1), FontId::proportional(13.0), look::text());
         Some(resp.clicked())
     }
 
@@ -630,9 +645,9 @@ impl PubliCraft {
     }
 
     fn draw_rulers(&self, ui: &egui::Ui, outer: ERect, body: ERect, base: Pos2, scale: f32) {
-        let bg = craft_theme::PANEL_RAISED;
-        let fg = craft_theme::TEXT_DIM;
-        let line = Stroke::new(1.0, craft_theme::BORDER);
+        let bg = look::panel_raised();
+        let fg = look::text_dim();
+        let line = Stroke::new(1.0, look::border());
         let p = ui.painter_at(outer);
         let hr = ERect::from_min_max(egui::pos2(body.min.x, outer.min.y), egui::pos2(body.max.x, body.min.y));
         let vr = ERect::from_min_max(egui::pos2(outer.min.x, body.min.y), egui::pos2(body.min.x, body.max.y));

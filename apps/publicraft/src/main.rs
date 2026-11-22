@@ -2,8 +2,14 @@
 
 mod assoc;
 mod canvas;
+mod export;
 mod fonts;
+mod look;
+mod outui;
+mod pdfimport;
+mod print;
 mod ribbon;
+mod start;
 
 use egui::{Color32, Pos2, RichText, Vec2, vec2};
 use publicraft_doc::{Align as DAlign, Document, Frame, FrameKind, MASTER, PageSize, Rect, Rgb, TextStyle};
@@ -154,6 +160,16 @@ pub(crate) struct PubliCraft {
     pub last_title: String,
     pub confirm_exit: bool,
     pub closing_ok: bool,
+    pub start: start::StartState,
+    /// Vero dopo che è stato creato o aperto il primo documento.
+    pub started: bool,
+    pub recent: Vec<PathBuf>,
+    /// Opacità della schermata File (dissolvenza all'apertura).
+    pub bs_alpha: f32,
+    /// Testo della ricerca comandi e se l'elenco è aperto.
+    pub cmd: String,
+    pub cmd_open: bool,
+    pub out: outui::OutState,
 }
 
 pub(crate) fn rgb(c: Rgb) -> Color32 {
@@ -162,7 +178,8 @@ pub(crate) fn rgb(c: Rgb) -> Color32 {
 
 impl PubliCraft {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        craft_theme::apply(&cc.egui_ctx, craft_theme::ACCENT_PUBLICRAFT);
+        craft_theme::load_mode("PubliCraft");
+        look::apply(&cc.egui_ctx);
         fonts::install(&cc.egui_ctx);
         let mut me = Self {
             d: DocState::new(1),
@@ -198,6 +215,13 @@ impl PubliCraft {
             last_title: String::new(),
             confirm_exit: false,
             closing_ok: false,
+            start: start::StartState::default(),
+            started: false,
+            recent: start::load_recent(),
+            bs_alpha: 1.0,
+            cmd: String::new(),
+            cmd_open: false,
+            out: outui::OutState::new(),
         };
         // Doppio clic su un file .pubcraft: l'app parte e lo apre al posto del documento vuoto.
         if let Some(arg) = std::env::args().nth(1) {
@@ -207,6 +231,27 @@ impl PubliCraft {
                 if me.others.len() == 1 && !me.others[0].dirty() {
                     me.others.clear();
                 }
+            }
+        }
+        // Per le prove: PUBLICRAFT_IMPORT=file.pdf importa subito quel PDF.
+        if let Ok(pdf) = std::env::var("PUBLICRAFT_IMPORT") {
+            if let Ok((doc, msg)) = pdfimport::import_pdf(std::path::Path::new(&pdf)) {
+                me.add_imported(doc, msg);
+            }
+        }
+        // Per le prove: PUBLICRAFT_SECTION=print|export|options|info apre quella pagina di «File».
+        if let Ok(sec) = std::env::var("PUBLICRAFT_SECTION") {
+            use start::Section;
+            let s = match sec.as_str() {
+                "print" => Some(Section::Print),
+                "export" => Some(Section::Export),
+                "options" => Some(Section::Options),
+                "info" => Some(Section::Info),
+                _ => None,
+            };
+            if let Some(s) = s {
+                me.start.section = s;
+                me.start.open = true;
             }
         }
         me
@@ -299,12 +344,18 @@ impl PubliCraft {
         })
     }
 
+    /// Passa dalla modalità chiara a quella scura (e viceversa) e la ricorda.
+    pub fn set_dark(&mut self, ctx: &egui::Context, dark: bool) {
+        craft_theme::save_mode("PubliCraft", dark);
+        look::apply(ctx);
+    }
+
     // ---- File e documenti ----
 
+    /// «Nuovo»: mostra la schermata iniziale con formati e modelli.
     pub fn new_doc(&mut self) {
-        let st = DocState::new(self.next_num);
-        self.next_num += 1;
-        self.push_tab(st);
+        self.start.section = start::Section::New;
+        self.start.open = true;
     }
 
     fn push_tab(&mut self, st: DocState) {
@@ -342,10 +393,20 @@ impl PubliCraft {
                 st.doc = d;
                 st.file = Some(path.clone());
                 self.push_tab(st);
+                if !self.started {
+                    // Il documento vuoto di partenza non serve più.
+                    self.others.clear();
+                    self.started = true;
+                }
+                self.start.open = false;
+                self.add_recent(&path);
                 self.message = Some((format!("Aperto {}", path.display()), false));
             }
             Ok(_) => self.message = Some(("Il documento non contiene pagine".into(), true)),
-            Err(e) => self.message = Some((format!("Impossibile aprire il file: {e}"), true)),
+            Err(e) => {
+                self.forget_recent(&path);
+                self.message = Some((format!("Impossibile aprire il file: {e}"), true));
+            }
         }
     }
 
@@ -364,6 +425,7 @@ impl PubliCraft {
         self.message = Some(match result {
             Ok(()) => {
                 let m = format!("Salvato {}", path.display());
+                self.add_recent(&path);
                 self.d.file = Some(path);
                 self.d.saved = self.d.doc.clone();
                 (m, false)
@@ -744,11 +806,11 @@ impl PubliCraft {
         ui.label(RichText::new("Proprietà").strong());
         let pg = self.pg();
         if self.d.sel.is_empty() {
-            ui.label(RichText::new("Nessun elemento selezionato").color(craft_theme::TEXT_DIM));
+            ui.label(RichText::new("Nessun elemento selezionato").color(look::text_dim()));
             return;
         }
         if self.d.sel.len() > 1 {
-            ui.label(RichText::new(format!("{} elementi selezionati", self.d.sel.len())).color(craft_theme::TEXT_DIM));
+            ui.label(RichText::new(format!("{} elementi selezionati", self.d.sel.len())).color(look::text_dim()));
             ui.add_space(6.0);
             if ui.button("Elimina").clicked() {
                 self.delete_selected();
@@ -783,7 +845,7 @@ impl PubliCraft {
                         ui.add(egui::DragValue::new(size_pt).range(4.0..=400.0).speed(0.25));
                     });
                     color_row(ui, "Colore", color);
-                    ui.label(RichText::new("Grassetto, rientri, elenchi e allineamento: scheda Home.").small().color(craft_theme::TEXT_DIM));
+                    ui.label(RichText::new("Grassetto, rientri, elenchi e allineamento: scheda Home.").small().color(look::text_dim()));
                 }
                 FrameKind::Rectangle { fill, stroke, stroke_mm } | FrameKind::Ellipse { fill, stroke, stroke_mm } | FrameKind::Triangle { fill, stroke, stroke_mm } => {
                     color_row(ui, "Riempimento", fill);
@@ -801,7 +863,7 @@ impl PubliCraft {
                     });
                 }
                 FrameKind::Picture { path } => {
-                    ui.label(RichText::new(path.as_str()).small().color(craft_theme::TEXT_DIM));
+                    ui.label(RichText::new(path.as_str()).small().color(look::text_dim()));
                 }
                 FrameKind::Table { rows, cols, cells, border, border_mm, size_pt } => {
                     let (mut r, mut c) = (*rows, *cols);
@@ -896,7 +958,7 @@ impl PubliCraft {
             if let Some((_, x, y)) = self.cursor {
                 ui.label(format!("{:.2}, {:.2} cm", x / 10.0, y / 10.0));
             } else {
-                ui.label(RichText::new("—").color(craft_theme::TEXT_DIM));
+                ui.label(RichText::new("—").color(look::text_dim()));
             }
             if self.d.sel.len() == 1 {
                 if let Some(f) = self.d.doc.frame(self.pg(), self.d.sel[0]) {
@@ -911,7 +973,7 @@ impl PubliCraft {
             }
             if let Some((m, err)) = &self.message {
                 ui.separator();
-                let c = if *err { Color32::from_rgb(0xe0, 0x5a, 0x47) } else { craft_theme::TEXT_DIM };
+                let c = if *err { Color32::from_rgb(0xe0, 0x5a, 0x47) } else { look::text_dim() };
                 ui.label(RichText::new(m).color(c));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1010,7 +1072,7 @@ impl PubliCraft {
                     }
                 });
                 if !self.find.note.is_empty() {
-                    ui.label(RichText::new(&self.find.note).color(craft_theme::TEXT_DIM));
+                    ui.label(RichText::new(&self.find.note).color(look::text_dim()));
                 }
             });
             self.find.open = open;
@@ -1037,7 +1099,7 @@ impl PubliCraft {
                     }
                 }
                 if !any {
-                    ui.label(RichText::new("Nessuna immagine nel documento").color(craft_theme::TEXT_DIM));
+                    ui.label(RichText::new("Nessuna immagine nel documento").color(look::text_dim()));
                 }
             });
             self.view.graphics = open;
@@ -1076,13 +1138,21 @@ impl eframe::App for PubliCraft {
             self.confirm_exit = true;
         }
 
-        egui::Panel::top("ribbon").show(ui, |ui| self.ribbon(ui));
+        self.poll_jobs(&ctx);
+        self.bs_alpha = ctx.animate_bool_with_time(ui.scope_id().with("backstage"), self.start.open, 0.18);
+        if self.start.open {
+            self.start_screen(ui);
+            self.dialogs(&ctx);
+            return;
+        }
+
+        egui::Panel::top("ribbon").frame(egui::Frame::new().fill(look::ribbon())).show(ui, |ui| self.ribbon(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         if self.view.nav {
             egui::Panel::left("pages").resizable(false).exact_size(150.0).show(ui, |ui| self.pages_pane(ui));
         }
         egui::Panel::right("props").default_size(240.0).show(ui, |ui| self.properties(ui));
-        egui::CentralPanel::default().show(ui, |ui| self.canvas(ui));
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(look::work())).show(ui, |ui| self.canvas(ui));
         self.dialogs(&ctx);
     }
 }
@@ -1090,6 +1160,38 @@ impl eframe::App for PubliCraft {
 fn main() -> eframe::Result {
     // Registra i file .pubcraft per questo utente (anche da riga di comando: `publicraft --register`).
     assoc::register();
+    // Esportazione da riga di comando: `publicraft --export documento.pubcraft uscita.pdf [dpi]`.
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--export") {
+        let (Some(inp), Some(out)) = (args.get(i + 1), args.get(i + 2)) else {
+            eprintln!("uso: publicraft --export <documento.pubcraft> <uscita.pdf|png> [dpi]");
+            std::process::exit(2);
+        };
+        let dpi: f32 = args.get(i + 3).and_then(|d| d.parse().ok()).unwrap_or(150.0);
+        let doc = if inp.to_lowercase().ends_with(".pdf") {
+            pdfimport::import_pdf(std::path::Path::new(inp)).map(|(d, m)| {
+                eprintln!("{m}");
+                d
+            })
+        } else if let Some(n) = inp.strip_prefix("template:") {
+            Ok(start::build_template(n.parse().unwrap_or(0)))
+        } else {
+            std::fs::read_to_string(inp).map_err(|e| e.to_string()).and_then(|t| Document::from_json(t.trim_start_matches('\u{feff}')).map_err(|e| e.to_string()))
+        };
+        let doc = doc.unwrap_or_else(|e| {
+            eprintln!("impossibile aprire {inp}: {e}");
+            std::process::exit(1);
+        });
+        let all: Vec<usize> = (0..doc.pages.len()).collect();
+        let imgs = export::render_pages(&doc, &all, dpi);
+        let path = std::path::Path::new(out);
+        let r = if out.to_lowercase().ends_with(".png") { export::write_png(path, &imgs[0]) } else { export::write_pdf(path, "PubliCraft", &imgs) };
+        if let Err(e) = r {
+            eprintln!("errore: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     if std::env::args().any(|a| a == "--register") {
         return Ok(());
     }
