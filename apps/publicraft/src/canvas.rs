@@ -14,6 +14,50 @@ const SPREAD_GAP_MM: f32 = 2.0;
 const RULER: f32 = 18.0;
 const HANDLE_PX: f32 = 9.0;
 const MARGIN_GUIDE_MM: f32 = 12.7;
+/// Distanza (in pixel) entro cui un elemento "si aggancia" alle guide.
+const SNAP_PX: f32 = 6.0;
+
+/// Posizioni di aggancio (mm): bordi, margini e centro della pagina, più i bordi e il centro degli altri riquadri.
+fn snap_targets(doc: &Document, page: usize, skip: &[u64]) -> (Vec<f32>, Vec<f32>) {
+    let (w, h) = (doc.page_size.w_mm, doc.page_size.h_mm);
+    let mut tx = vec![0.0, MARGIN_GUIDE_MM, w / 2.0, w - MARGIN_GUIDE_MM, w];
+    let mut ty = vec![0.0, MARGIN_GUIDE_MM, h / 2.0, h - MARGIN_GUIDE_MM, h];
+    let frames = if page == MASTER { Some(&doc.master.frames) } else { doc.page(page).map(|p| &p.frames) };
+    for f in frames.into_iter().flatten() {
+        if skip.contains(&f.id) {
+            continue;
+        }
+        let v = f.visual_rect();
+        tx.extend([v.x, v.x + v.w / 2.0, v.x + v.w]);
+        ty.extend([v.y, v.y + v.h / 2.0, v.y + v.h]);
+    }
+    (tx, ty)
+}
+
+/// Il bordo/centro più vicino a un valore di `vals`: (spostamento da applicare, posizione della guida).
+fn snap_axis(vals: &[f32], targets: &[f32], thr: f32) -> Option<(f32, f32)> {
+    let mut best: Option<(f32, f32)> = None;
+    for v in vals {
+        for t in targets {
+            let d = t - v;
+            if d.abs() <= thr && best.is_none_or(|b| d.abs() < b.0.abs()) {
+                best = Some((d, *t));
+            }
+        }
+    }
+    best
+}
+
+fn draw_guides(painter: &Painter, origin: Pos2, scale: f32, page_px: Vec2, gx: Option<f32>, gy: Option<f32>) {
+    let st = Stroke::new(1.0, Color32::from_rgb(0xe8, 0x1c, 0x2c));
+    let r = ERect::from_min_size(origin, page_px).expand(10.0);
+    if let Some(x) = gx {
+        painter.vline(origin.x + x * scale, r.y_range(), st);
+    }
+    if let Some(y) = gy {
+        painter.hline(r.x_range(), origin.y + y * scale, st);
+    }
+}
 const BASELINE_MM: f32 = 5.08;
 
 struct Look<'a> {
@@ -542,6 +586,26 @@ impl PubliCraft {
                             f.rect.y = y + dy;
                         }
                     }
+                    // Guide di allineamento rosse (Alt le disattiva).
+                    if !ui.input(|i| i.modifiers.alt) {
+                        let thr = SNAP_PX / scale;
+                        let (tx, ty) = snap_targets(&self.d.doc, *page, &self.d.sel);
+                        if let Some(b) = self.d.doc.bounds(*page, &self.d.sel) {
+                            let sx = snap_axis(&[b.x, b.x + b.w / 2.0, b.x + b.w], &tx, thr);
+                            let sy = snap_axis(&[b.y, b.y + b.h / 2.0, b.y + b.h], &ty, thr);
+                            let (ox, oy) = (sx.map_or(0.0, |s| s.0), sy.map_or(0.0, |s| s.0));
+                            if ox != 0.0 || oy != 0.0 {
+                                for (id, _, _) in starts {
+                                    if let Some(f) = self.d.doc.frame_mut(*page, *id) {
+                                        f.rect.x += ox;
+                                        f.rect.y += oy;
+                                    }
+                                }
+                            }
+                            let o = origin_of(*page);
+                            draw_guides(painter, o, scale, page_px, sx.map(|s| s.1), sy.map(|s| s.1));
+                        }
+                    }
                 }
                 Some(Drag::Resize { page, id }) => {
                     let m = to_mm(*page, p);
@@ -550,6 +614,25 @@ impl PubliCraft {
                         v.w = (m.x - v.x).max(MIN_FRAME_MM);
                         v.h = (m.y - v.y).max(MIN_FRAME_MM);
                         f.set_visual_rect(v);
+                    }
+                    if !ui.input(|i| i.modifiers.alt) {
+                        let thr = SNAP_PX / scale;
+                        let (tx, ty) = snap_targets(&self.d.doc, *page, &[*id]);
+                        let mut gx = None;
+                        let mut gy = None;
+                        if let Some(f) = self.d.doc.frame_mut(*page, *id) {
+                            let mut v = f.visual_rect();
+                            if let Some((d, t)) = snap_axis(&[v.x + v.w], &tx, thr) {
+                                v.w = (v.w + d).max(MIN_FRAME_MM);
+                                gx = Some(t);
+                            }
+                            if let Some((d, t)) = snap_axis(&[v.y + v.h], &ty, thr) {
+                                v.h = (v.h + d).max(MIN_FRAME_MM);
+                                gy = Some(t);
+                            }
+                            f.set_visual_rect(v);
+                        }
+                        draw_guides(painter, origin_of(*page), scale, page_px, gx, gy);
                     }
                 }
                 Some(Drag::Create { page, start, .. }) => {

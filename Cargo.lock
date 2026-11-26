@@ -635,7 +635,7 @@ dependencies = [
 
 [[package]]
 name = "craft-theme"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "egui",
 ]
@@ -2483,7 +2483,7 @@ checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
 
 [[package]]
 name = "publicraft"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "craft-theme",
  "eframe",
@@ -2501,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "publicraft-doc"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "serde",
  "serde_json",
